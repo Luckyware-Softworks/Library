@@ -106,8 +106,7 @@ local function CreateESP(object)
             elements.Tracer.From = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y)
             elements.Tracer.To = Vector2.new(screenPos.X, screenPos.Y)
             elements.Tracer.Color = color
-
-            -- Ensure humanoid health is valid before accessing it
+                
             if humanoid.MaxHealth > 0 then
                 local healthRatio = humanoid.Health / humanoid.MaxHealth
                 elements.HealthBarOutline.Visible = ESP.Settings.ShowHealth
