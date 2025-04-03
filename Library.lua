@@ -11,8 +11,10 @@ local LocalPlayer = Players.LocalPlayer;
 local Mouse = LocalPlayer:GetMouse();
 
 local DrawingLib = typeof(Drawing) == "table" and Drawing or { drawing_replaced = true };
-local ProtectGui = protectgui or protect_gui or (function() end);
+local ProtectGui = protectgui or (function() end);
 local GetHUI = gethui or (function() return CoreGui end);
+
+local IsBadDrawingLib = false;
 
 local ScreenGui = Instance.new('ScreenGui');
 pcall(ProtectGui, ScreenGui);
@@ -42,6 +44,8 @@ getgenv().Linoria = {
 
 getgenv().Toggles = Toggles; -- if you load infinite yeild after you executed any script with LinoriaLib it will just break the whole UI lib :/ (thats why I added getgenv().Linoria)
 getgenv().Options = Options;
+getgenv().Labels = Labels;
+getgenv().Buttons = Buttons;
 
 local LibraryMainOuterFrame = nil;
 local Library = {
@@ -54,7 +58,7 @@ local Library = {
     MainColor = Color3.fromRGB(28, 28, 28);
     BackgroundColor = Color3.fromRGB(20, 20, 20);
 
-      AccentColor = Color3.fromRGB(119, 221, 119);
+    AccentColor = Color3.fromRGB(119, 221, 119);
     DisabledAccentColor = Color3.fromRGB(142, 142, 142);
 
     OutlineColor = Color3.fromRGB(50, 50, 50);
@@ -76,8 +80,7 @@ local Library = {
     
     ActiveTab = nil;
     Toggled = false;
-    
-    MinSize = Vector2.new(550, 300);
+
     IsMobile = false;
     DevicePlatform = Enum.Platform.None;
 
@@ -85,7 +88,7 @@ local Library = {
     CantDragForced = false;
 
     NotifySide = "Left";
-    ShowCustomCursor = false;
+    ShowCustomCursor = true;
     ShowToggleFrameInKeybinds = true;
     NotifyOnError = false; -- true = Library:Notify for SafeCallback (still warns in the developer console)
 
@@ -101,13 +104,11 @@ local Library = {
 
 pcall(function() Library.DevicePlatform = InputService:GetPlatform(); end); -- For safety so the UI library doesn't error.
 Library.IsMobile = (Library.DevicePlatform == Enum.Platform.Android or Library.DevicePlatform == Enum.Platform.IOS);
-
-if Library.IsMobile then
-    Library.MinSize = Vector2.new(550, 200);
-end
+Library.MinSize = if Library.IsMobile then Vector2.new(550, 200) else Vector2.new(550, 300);
 
 local RainbowStep = 0
 local Hue = 0
+local DPIScale = 1
 
 table.insert(Library.Signals, RenderStepped:Connect(function(Delta)
     RainbowStep = RainbowStep + Delta
@@ -126,77 +127,102 @@ table.insert(Library.Signals, RenderStepped:Connect(function(Delta)
     end;
 end));
 
+local function ApplyDPIScale(Position)
+    return UDim2.new(Position.X.Scale, Position.X.Offset * DPIScale, Position.Y.Scale, Position.Y.Offset * DPIScale);
+end;
+
+local function ApplyTextScale(TextSize)
+    return TextSize * DPIScale;
+end;
+
 local function GetTableSize(t)
     local n = 0
     for _, _ in pairs(t) do
         n = n + 1
     end
-    return n   
+    return n;
 end;
 
-local function GetPlayersString(ExcludeLocalPlayer)
+local function GetPlayers(ExcludeLocalPlayer, ReturnInstances)
     local PlayerList = Players:GetPlayers();
 
-    if ExcludeLocalPlayer == true then
-        local idx = table.find(PlayerList, Players.LocalPlayer);
+    if ExcludeLocalPlayer then
+        local Idx = table.find(PlayerList, LocalPlayer);
 
-        if idx then
-            table.remove(PlayerList, idx);
-        end;
+        if Idx then
+            table.remove(PlayerList, Idx);
+        end
+    end
+
+    table.sort(PlayerList, function(Player1, Player2)
+        return Player1.Name:lower() < Player2.Name:lower();
+    end)
+
+    if ReturnInstances == true then
+        return PlayerList;
     end;
 
-    for i = 1, #PlayerList do
-        PlayerList[i] = PlayerList[i].Name;
+    local FixedPlayerList = {};
+    for _, player in next, PlayerList do
+        FixedPlayerList[#FixedPlayerList + 1] = player.Name;
     end;
 
-    table.sort(PlayerList, function(str1, str2) return str1 < str2 end);
-
-    return PlayerList;
+    return FixedPlayerList;
 end;
 
-local function GetTeamsString()
+local function GetTeams(ReturnInstances)
     local TeamList = Teams:GetTeams();
 
-    for i = 1, #TeamList do
-        TeamList[i] = TeamList[i].Name;
+    table.sort(TeamList, function(Team1, Team2)
+        return Team1.Name:lower() < Team2.Name:lower();
+    end)
+
+    if ReturnInstances == true then
+        return TeamList;
     end;
 
-    table.sort(TeamList, function(str1, str2) return str1 < str2 end);
-    
-    return TeamList;
+    local FixedTeamList = {};
+    for _, team in next, TeamList do
+        FixedTeamList[#FixedTeamList + 1] = team.Name;
+    end;
+
+    return FixedTeamList;
 end;
 
-function Library:SafeCallback(f, ...)
-    if (not f) then
-        return;
-    end;
+function Library:SetDPIScale(value: number) 
+    assert(type(value) == "number", "Expected type number for DPI scale but got " .. typeof(value))
+    
+    DPIScale = value / 100;
+    Library.MinSize = (if Library.IsMobile then Vector2.new(550, 200) else Vector2.new(550, 300)) * DPIScale;
+end;
 
-    local success, event = pcall(f, ...);
-    if not success then
-        local _, i = event:find(":%d+: ");
+function Library:SafeCallback(Func, ...)
+    if not (Func and typeof(Func) == "function") then
+        return
+    end
 
+    local run = function(func, ...)
+        local Success, Response = pcall(func, ...)
+        if Success then
+            return Response
+        end
+    
+        local Traceback = debug.traceback():gsub("\n", " ")
+        local _, i = Traceback:find(":%d+ ")
+        Traceback = Traceback:sub(i + 1):gsub(" :", ":")
+    
+        task.defer(error, Response .. " - " .. Traceback)
         if Library.NotifyOnError then
-            if not i then
-                warn(event);
-                return Library:Notify(event);
-            end;
-
-            warn(event:sub(i + 1));
-            return Library:Notify(event:sub(i + 1), 3);
-        else
-            if not i then
-                return warn(event);
-            end;
-
-            return warn(event:sub(i + 1));
-        end;
+            Library:Notify(Response)
+        end
     end;
+
+    task.spawn(run, Func, ...);
 end;
 
 function Library:AttemptSave()
-    if Library.SaveManager then
-        Library.SaveManager:Save();
-    end;
+    if (not Library.SaveManager) then return end;
+    Library.SaveManager:Save();
 end;
 
 function Library:Create(Class, Properties)
@@ -207,6 +233,12 @@ function Library:Create(Class, Properties)
     end;
 
     for Property, Value in next, Properties do
+        if (Property == "Size" or Property == "Position") then
+            Value = ApplyDPIScale(Value);
+        elseif Property == "TextSize" then
+            Value = ApplyTextScale(Value);
+        end;
+
         local success, err = pcall(function()
             _Instance[Property] = Value;
         end);
@@ -370,7 +402,7 @@ function Library:MakeResizable(Instance, MinSize)
 
     Instance.Active = true;
     
-    local ResizerImage_Size = 25;
+    local ResizerImage_Size = 25 * DPIScale;
     local ResizerImage_HoverTransparency = 0.5;
 
     local Resizer = Library:Create('Frame', {
@@ -498,7 +530,7 @@ function Library:AddToolTip(InfoStr, DisabledInfoStr, HoverInstance)
     local function UpdateText(Text)
         if Text == nil then return end
 
-        local X, Y = Library:GetTextBounds(Text, Library.Font, 14);
+        local X, Y = Library:GetTextBounds(Text, Library.Font, 14 * DPIScale);
 
         Label.Text = Text;
         Tooltip.Size = UDim2.fromOffset(X + 5, Y + 4);
@@ -611,6 +643,7 @@ function Library:MouseIsOverOpenedFrame(Input)
     if Library.IsMobile and Input then 
         Pos = Input.Position;
     end;
+
     for Frame, _ in next, Library.OpenedFrames do
         local AbsPos, AbsSize = Frame.AbsolutePosition, Frame.AbsoluteSize;
 
@@ -733,6 +766,7 @@ function Library:Unload()
         Library:SafeCallback(UnloadCallback)
     end
 
+    getgenv().Linoria = nil
     ScreenGui:Destroy()
 end
 
@@ -746,12 +780,16 @@ Library:GiveSignal(ScreenGui.DescendantRemoving:Connect(function(Instance)
     end;
 end))
 
+local function Trim(Text: string)
+    return Text:match("^%s*(.-)%s*$")
+end
+
 local BaseAddons = {};
 
 do
-    local Funcs = {};
+    local BaseAddonsFuncs = {};
 
-    function Funcs:AddColorPicker(Idx, Info)
+    function BaseAddonsFuncs:AddColorPicker(Idx, Info)
         local ParentObj = self
         local ToggleLabel = self.TextLabel;
         --local Container = self.Container;
@@ -767,7 +805,7 @@ do
         };
 
         function ColorPicker:SetHSVFromRGB(Color)
-            local H, S, V = Color3.toHSV(Color);
+            local H, S, V = Color:ToHSV();
 
             ColorPicker.Hue = H;
             ColorPicker.Sat = S;
@@ -780,7 +818,7 @@ do
             BackgroundColor3 = ColorPicker.Value;
             BorderColor3 = Library:GetDarkerColor(ColorPicker.Value);
             BorderMode = Enum.BorderMode.Inset;
-            Size = UDim2.new(0, 28, 0, 14);
+            Size = UDim2.new(0, 28, 0, 18);
             ZIndex = 6;
             Parent = ToggleLabel;
         });
@@ -1208,14 +1246,14 @@ do
             HueBox.Text = '#' .. ColorPicker.Value:ToHex()
             RgbBox.Text = table.concat({ math.floor(ColorPicker.Value.R * 255), math.floor(ColorPicker.Value.G * 255), math.floor(ColorPicker.Value.B * 255) }, ', ')
 
-            Library:SafeCallback(ColorPicker.Callback, ColorPicker.Value);
-            Library:SafeCallback(ColorPicker.Changed, ColorPicker.Value);
+            Library:SafeCallback(ColorPicker.Callback, ColorPicker.Value, ColorPicker.Transparency);
+            Library:SafeCallback(ColorPicker.Changed, ColorPicker.Value, ColorPicker.Transparency);
         end;
 
         function ColorPicker:OnChanged(Func)
             ColorPicker.Changed = Func;
             
-            Library:SafeCallback(Func, ColorPicker.Value);
+            Library:SafeCallback(Func, ColorPicker.Value, ColorPicker.Transparency);
         end;
 
         if ParentObj.Addons then
@@ -1293,7 +1331,7 @@ do
         end);
 
         DisplayFrame.InputBegan:Connect(function(Input)
-            if Library:MouseIsOverOpenedFrame() then
+            if Library:MouseIsOverOpenedFrame(Input) then
                 return;
             end;
 
@@ -1360,10 +1398,10 @@ do
         return self;
     end;
 
-    function Funcs:AddKeyPicker(Idx, Info)
+    function BaseAddonsFuncs:AddKeyPicker(Idx, Info)
         local ParentObj = self;
         local ToggleLabel = self.TextLabel;
-        local Container = self.Container;
+        --local Container = self.Container;
 
         assert(Info.Default, 'AddKeyPicker: Missing default value.');
 
@@ -1385,7 +1423,7 @@ do
         local PickOuter = Library:Create('Frame', {
             BackgroundColor3 = Color3.new(0, 0, 0);
             BorderColor3 = Color3.new(0, 0, 0);
-            Size = UDim2.new(0, 28, 0, 15);
+            Size = UDim2.new(0, 28, 0, 18);
             ZIndex = 6;
             Parent = ToggleLabel;
         });
@@ -1416,7 +1454,7 @@ do
         local ModeSelectOuter = Library:Create('Frame', {
             BorderColor3 = Color3.new(0, 0, 0);
             Position = UDim2.fromOffset(ToggleLabel.AbsolutePosition.X + ToggleLabel.AbsoluteSize.X + 4, ToggleLabel.AbsolutePosition.Y + 1);
-            Size = UDim2.new(0, 60, 0, 45 + 2);
+            Size = UDim2.new(0, 60, 0, 2);
             Visible = false;
             ZIndex = 14;
             Parent = ScreenGui;
@@ -1523,14 +1561,14 @@ do
                 KeybindsToggleInner.BackgroundColor3 = State and Library.AccentColor or Library.MainColor;
                 KeybindsToggleInner.BorderColor3 = State and Library.AccentColorDark or Library.OutlineColor;
                 KeybindsToggleLabel.TextColor3 = State and Library.AccentColor or Library.FontColor;
-                
+
                 Library.RegistryMap[KeybindsToggleInner].Properties.BackgroundColor3 = State and 'AccentColor' or 'MainColor';
                 Library.RegistryMap[KeybindsToggleInner].Properties.BorderColor3 = State and 'AccentColorDark' or 'OutlineColor';
                 Library.RegistryMap[KeybindsToggleLabel].Properties.TextColor3 = State and 'AccentColor' or 'FontColor';
             end;
 
-            function KeybindsToggle:SetText(text)
-                KeybindsToggleLabel.Text = text
+            function KeybindsToggle:SetText(Text)
+                KeybindsToggleLabel.Text = Text
             end
 
             function KeybindsToggle:SetVisibility(bool)
@@ -1574,6 +1612,7 @@ do
                 ZIndex = 16;
                 Parent = ModeSelectInner;
             });
+            ModeSelectOuter.Size = ModeSelectOuter.Size + UDim2.new(0, 0, 0, 17)
 
             function ModeButton:Select()
                 for _, Button in next, ModeButtons do
@@ -1617,22 +1656,10 @@ do
             local State = KeyPicker:GetState();
             local ShowToggle = Library.ShowToggleFrameInKeybinds and KeyPicker.Mode == 'Toggle';
 
-            if ShowToggle then
-                if KeybindsToggle.Loaded then
-                    KeybindsToggle:SetNormal(false);
-                    KeybindsToggle:SetVisibility(true);       
-                    KeybindsToggle:SetText(string.format('[%s] %s (%s)', KeyPicker.Value, Info.Text, KeyPicker.Mode));
-                    KeybindsToggle:Display(State);
-                end
-            else
-                if KeybindsToggle.Loaded then
-                    KeybindsToggle:SetNormal(true);
-                end
-            end;  
             if KeybindsToggle.Loaded then
-                if ShowToggle then KeybindsToggle:SetNormal(false); else KeybindsToggle:SetNormal(true); end;
-       
-                KeybindsToggle:SetVisibility(true);       
+                KeybindsToggle:SetNormal(not ShowToggle)
+
+                KeybindsToggle:SetVisibility(true);
                 KeybindsToggle:SetText(string.format('[%s] %s (%s)', KeyPicker.Value, Info.Text, KeyPicker.Mode));
                 KeybindsToggle:Display(State);
             end
@@ -1659,7 +1686,7 @@ do
                 end;--]]
             end;
 
-            Library.KeybindFrame.Size = UDim2.new(0, math.max(XSize + 10, 210), 0, YSize + 23 + 6)
+            Library.KeybindFrame.Size = UDim2.new(0, math.max(XSize + 10, 210), 0, (YSize + 23 + 6) * DPIScale)
         end;
 
         function KeyPicker:GetState()
@@ -1672,9 +1699,10 @@ do
 
                 local Key = KeyPicker.Value;
 
-                if Key == 'MB1' or Key == 'MB2' then
-                    return Key == 'MB1' and InputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
-                        or Key == 'MB2' and InputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2);
+                if Key == 'MB1' then
+                    return InputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
+                elseif Key == 'MB2' then
+                    return InputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2);
                 else
                     return InputService:IsKeyDown(Enum.KeyCode[KeyPicker.Value]) and not InputService:GetFocusedTextBox();
                 end;
@@ -1826,48 +1854,679 @@ do
         return self;
     end;
 
-    BaseAddons.__index = Funcs;
+    function BaseAddonsFuncs:AddDropdown(Idx, Info)
+        Info.ReturnInstanceInstead = if typeof(Info.ReturnInstanceInstead) == "boolean" then Info.ReturnInstanceInstead else false;
+
+        if Info.SpecialType == 'Player' then
+            Info.ExcludeLocalPlayer = if typeof(Info.ExcludeLocalPlayer) == "boolean" then Info.ExcludeLocalPlayer else false;
+
+            Info.Values = GetPlayers(Info.ExcludeLocalPlayer, Info.ReturnInstanceInstead);
+            Info.AllowNull = true;
+        elseif Info.SpecialType == 'Team' then
+            Info.Values = GetTeams(Info.ReturnInstanceInstead);
+            Info.AllowNull = true;
+        end;
+
+        assert(Info.Values, 'AddDropdown: Missing dropdown value list.');
+        assert(Info.AllowNull or Info.Default, 'AddDropdown: Missing default value. Pass `AllowNull` as true if this was intentional.')
+
+        Info.Searchable = if typeof(Info.Searchable) == "boolean" then Info.Searchable else false;
+        Info.FormatDisplayValue = if typeof(Info.FormatDisplayValue) == "function" then Info.FormatDisplayValue else nil;
+
+        local Dropdown = {
+            Values = Info.Values;
+            Value = Info.Multi and {};
+            DisabledValues = Info.DisabledValues or {};
+            Multi = Info.Multi;
+            Type = 'Dropdown';
+            SpecialType = Info.SpecialType; -- can be either 'Player' or 'Team'
+            Visible = if typeof(Info.Visible) == "boolean" then Info.Visible else true;
+            Disabled = if typeof(Info.Disabled) == "boolean" then Info.Disabled else false;
+            Callback = Info.Callback or function(Value) end;
+
+            OriginalText = Info.Text; Text = Info.Text;
+            ExcludeLocalPlayer = Info.ExcludeLocalPlayer;
+            ReturnInstanceInstead = Info.ReturnInstanceInstead;
+        };
+
+        local Tooltip;
+
+        local ParentObj = self
+        local ToggleLabel = self.TextLabel;
+        local Container = self.Container;
+
+        local RelativeOffset = 0;
+
+        for _, Element in next, Container:GetChildren() do
+            if not Element:IsA('UIListLayout') then
+                RelativeOffset = RelativeOffset + Element.Size.Y.Offset;
+            end;
+        end;
+
+        local DropdownOuter = Library:Create('Frame', {
+            BackgroundColor3 = Color3.new(0, 0, 0);
+            BorderColor3 = Color3.new(0, 0, 0);
+            Size = UDim2.new(0, 60, 0, 18);
+            Visible = Dropdown.Visible;
+            ZIndex = 6;
+            Parent = ToggleLabel;
+            Name = "drodpwon_outer";
+        });
+
+        Library:AddToRegistry(DropdownOuter, {
+            BorderColor3 = 'Black';
+        });
+
+        local DropdownInner = Library:Create('Frame', {
+            BackgroundColor3 = Library.MainColor;
+            BorderColor3 = Library.OutlineColor;
+            BorderMode = Enum.BorderMode.Inset;
+            Size = UDim2.new(1, 0, 1, 0);
+            ZIndex = 6;
+            Parent = DropdownOuter;
+        });
+
+        Library:AddToRegistry(DropdownInner, {
+            BackgroundColor3 = 'MainColor';
+            BorderColor3 = 'OutlineColor';
+        });
+
+        Library:Create('UIGradient', {
+            Color = ColorSequence.new({
+                ColorSequenceKeypoint.new(0, Color3.new(1, 1, 1)),
+                ColorSequenceKeypoint.new(1, Color3.fromRGB(212, 212, 212))
+            });
+            Rotation = 90;
+            Parent = DropdownInner;
+        });
+
+        local DropdownInnerSearch;
+        if Info.Searchable then
+            DropdownInnerSearch = Library:Create('TextBox', {
+                BackgroundTransparency = 1;
+                Visible = false;
+
+                Position = UDim2.new(0, 5, 0, 0);
+                Size = UDim2.new(0.9, -5, 1, 0);
+
+                Font = Library.Font;
+                PlaceholderColor3 = Color3.fromRGB(190, 190, 190);
+                PlaceholderText = 'Search...';
+
+                Text = '';
+                TextColor3 = Library.FontColor;
+                TextSize = 14;
+                TextStrokeTransparency = 0;
+                TextXAlignment = Enum.TextXAlignment.Left;
+
+                ClearTextOnFocus = false;
+
+                ZIndex = 7;
+                Parent = DropdownOuter;
+            });
+
+            Library:ApplyTextStroke(DropdownInnerSearch);
+
+            Library:AddToRegistry(DropdownInnerSearch, {
+                TextColor3 = 'FontColor';
+            });
+        end
+
+        local DropdownArrow = Library:Create('ImageLabel', {
+            AnchorPoint = Vector2.new(0, 0.5);
+            BackgroundTransparency = 1;
+            Position = UDim2.new(1, -16, 0.5, 0);
+            Size = UDim2.new(0, 12, 0, 12);
+            Image = 'http://www.roblox.com/asset/?id=6282522798';
+            ZIndex = 8;
+            Parent = DropdownInner;
+        });
+
+        local ItemList = Library:CreateLabel({
+            Position = UDim2.new(0, 5, 0, 0);
+            Size = UDim2.new(1, -5, 1, 0);
+            TextSize = 14;
+            Text = '--';
+            TextXAlignment = Enum.TextXAlignment.Left;
+            TextWrapped = false;
+            TextTruncate = Enum.TextTruncate.AtEnd;
+            RichText = true;
+            ZIndex = 7;
+            Parent = DropdownInner;
+        });
+
+        Library:OnHighlight(DropdownOuter, DropdownOuter,
+            { BorderColor3 = 'AccentColor' },
+            { BorderColor3 = 'Black' },
+            function()
+                return not Dropdown.Disabled;
+            end
+        );
+
+        if typeof(Info.Tooltip) == "string" or typeof(Info.DisabledTooltip) == "string" then
+            Tooltip = Library:AddToolTip(Info.Tooltip, Info.DisabledTooltip, DropdownOuter)
+            Tooltip.Disabled = Dropdown.Disabled;
+        end
+
+        local MAX_DROPDOWN_ITEMS = if typeof(Info.MaxVisibleDropdownItems) == "number" then math.clamp(Info.MaxVisibleDropdownItems, 4, 16) else 8;
+
+        local ListOuter = Library:Create('Frame', {
+            BackgroundColor3 = Color3.new(0, 0, 0);
+            BorderColor3 = Color3.new(0, 0, 0);
+            ZIndex = 20;
+            Visible = false;
+            Parent = ScreenGui;
+        });
+
+        local function RecalculateListPosition()
+            ListOuter.Position = UDim2.fromOffset(DropdownOuter.AbsolutePosition.X, DropdownOuter.AbsolutePosition.Y + DropdownOuter.Size.Y.Offset + 1);
+        end;
+
+        local function RecalculateListSize(YSize)
+            local Y = YSize or math.clamp(GetTableSize(Dropdown.Values) * (20 * DPIScale), 0, MAX_DROPDOWN_ITEMS * (20 * DPIScale)) + 1;
+            ListOuter.Size = UDim2.fromOffset(DropdownOuter.AbsoluteSize.X + 0.5, Y)
+        end;
+
+        RecalculateListPosition();
+        RecalculateListSize();
+
+        DropdownOuter:GetPropertyChangedSignal('AbsolutePosition'):Connect(RecalculateListPosition);
+        DropdownOuter:GetPropertyChangedSignal('AbsoluteSize'):Connect(RecalculateListSize);
+
+        local ListInner = Library:Create('Frame', {
+            BackgroundColor3 = Library.MainColor;
+            BorderColor3 = Library.OutlineColor;
+            BorderMode = Enum.BorderMode.Inset;
+            BorderSizePixel = 0;
+            Size = UDim2.new(1, 0, 1, 0);
+            ZIndex = 21;
+            Parent = ListOuter;
+        });
+
+        Library:AddToRegistry(ListInner, {
+            BackgroundColor3 = 'MainColor';
+            BorderColor3 = 'OutlineColor';
+        });
+
+        local Scrolling = Library:Create('ScrollingFrame', {
+            BackgroundTransparency = 1;
+            BorderSizePixel = 0;
+            CanvasSize = UDim2.new(0, 0, 0, 0);
+            Size = UDim2.new(1, 0, 1, 0);
+            ZIndex = 21;
+            Parent = ListInner;
+
+            TopImage = 'rbxasset://textures/ui/Scroll/scroll-middle.png',
+            BottomImage = 'rbxasset://textures/ui/Scroll/scroll-middle.png',
+
+            ScrollBarThickness = 3,
+            ScrollBarImageColor3 = Library.AccentColor,
+        });
+
+        Library:AddToRegistry(Scrolling, {
+            ScrollBarImageColor3 = 'AccentColor'
+        })
+
+        Library:Create('UIListLayout', {
+            Padding = UDim.new(0, 0);
+            FillDirection = Enum.FillDirection.Vertical;
+            SortOrder = Enum.SortOrder.LayoutOrder;
+            Parent = Scrolling;
+        });
+
+        function Dropdown:UpdateColors()
+            ItemList.TextColor3 = Dropdown.Disabled and Library.DisabledAccentColor or Color3.new(1, 1, 1);
+            DropdownArrow.ImageColor3 = Dropdown.Disabled and Library.DisabledAccentColor or Color3.new(1, 1, 1);
+        end;
+
+        function Dropdown:Display()
+            local Values = Dropdown.Values;
+            local Str = '';
+
+            if Info.Multi then
+                for Idx, Value in next, Values do
+                    local StringValue = if typeof(Value) == "Instance" then Value.Name else Value;
+
+                    if Dropdown.Value[Value] then
+                        Str = Str .. (Info.FormatDisplayValue and tostring(Info.FormatDisplayValue(StringValue)) or StringValue) .. ', ';
+                    end;
+                end;
+
+                Str = Str:sub(1, #Str - 2);
+                ItemList.Text = (Str == '' and '--' or Str);
+            else
+                if not Dropdown.Value then
+                    ItemList.Text = '--';
+                    return;
+                end;
+
+                local StringValue = if typeof(Dropdown.Value) == "Instance" then Dropdown.Value.Name else Dropdown.Value;
+                ItemList.Text = Info.FormatDisplayValue and tostring(Info.FormatDisplayValue(StringValue)) or StringValue;
+            end;
+
+            local X = Library:GetTextBounds(ItemList.Text, Library.Font, ItemList.TextSize, Vector2.new(ToggleLabel.AbsoluteSize.X, math.huge)) + 26;
+            DropdownOuter.Size = UDim2.new(0, X, 0, 18)
+        end;
+
+        function Dropdown:GetActiveValues()
+            if Info.Multi then
+                local T = {};
+
+                for Value, Bool in next, Dropdown.Value do
+                    table.insert(T, Value);
+                end;
+
+                return T;
+            else
+                return Dropdown.Value and 1 or 0;
+            end;
+        end;
+
+        function Dropdown:BuildDropdownList()
+            local Values = Dropdown.Values;
+            local DisabledValues = Dropdown.DisabledValues;
+            local Buttons = {};
+
+            for _, Element in next, Scrolling:GetChildren() do
+                if not Element:IsA('UIListLayout') then
+                    Element:Destroy();
+                end;
+            end;
+
+            local Count = 0;
+            for Idx, Value in next, Values do
+                local StringValue = if typeof(Value) == "Instance" then Value.Name else Value;
+                if Info.Searchable and not string.lower(StringValue):match(string.lower(DropdownInnerSearch.Text)) then
+                    continue;
+                end
+
+                local IsDisabled = table.find(DisabledValues, StringValue);
+                local Table = {};
+
+                Count = Count + 1;
+
+                local Button = Library:Create('TextButton', {
+                    AutoButtonColor = false,
+                    BackgroundColor3 = Library.MainColor;
+                    BorderColor3 = Library.OutlineColor;
+                    BorderMode = Enum.BorderMode.Middle;
+                    Size = UDim2.new(1, -1, 0, 20);
+                    Text = '';
+                    ZIndex = 23;
+                    Parent = Scrolling;
+                });
+
+                Library:AddToRegistry(Button, {
+                    BackgroundColor3 = 'MainColor';
+                    BorderColor3 = 'OutlineColor';
+                });
+
+                local ButtonLabel = Library:CreateLabel({
+                    Active = false;
+                    Size = UDim2.new(1, -6, 1, 0);
+                    Position = UDim2.new(0, 6, 0, 0);
+                    TextSize = 14;
+                    Text = Info.FormatDisplayValue and tostring(Info.FormatDisplayValue(StringValue)) or StringValue;
+                    TextXAlignment = Enum.TextXAlignment.Left;
+                    RichText = true;
+                    ZIndex = 25;
+                    Parent = Button;
+                });
+
+                Library:OnHighlight(Button, Button,
+                    { BorderColor3 = IsDisabled and 'DisabledAccentColor' or 'AccentColor', ZIndex = 24 },
+                    { BorderColor3 = 'OutlineColor', ZIndex = 23 }
+                );
+
+                local Selected;
+
+                if Info.Multi then
+                    Selected = Dropdown.Value[Value];
+                else
+                    Selected = Dropdown.Value == Value;
+                end;
+
+                function Table:UpdateButton()
+                    if Info.Multi then
+                        Selected = Dropdown.Value[Value];
+                    else
+                        Selected = Dropdown.Value == Value;
+                    end;
+
+                    ButtonLabel.TextColor3 = Selected and Library.AccentColor or (IsDisabled and Library.DisabledAccentColor or Library.FontColor);
+                    Library.RegistryMap[ButtonLabel].Properties.TextColor3 = Selected and 'AccentColor' or (IsDisabled and 'DisabledAccentColor' or 'FontColor');
+                end;
+
+                if not IsDisabled then
+                    Button.MouseButton1Click:Connect(function(Input)
+                        local Try = not Selected;
+
+                        if Dropdown:GetActiveValues() == 1 and (not Try) and (not Info.AllowNull) then
+                        else
+                            if Info.Multi then
+                                Selected = Try;
+
+                                if Selected then
+                                    Dropdown.Value[Value] = true;
+                                else
+                                    Dropdown.Value[Value] = nil;
+                                end;
+                            else
+                                Selected = Try;
+
+                                if Selected then
+                                    Dropdown.Value = Value;
+                                else
+                                    Dropdown.Value = nil;
+                                end;
+
+                                for _, OtherButton in next, Buttons do
+                                    OtherButton:UpdateButton();
+                                end;
+                            end;
+
+                            Table:UpdateButton();
+                            Dropdown:Display();
+                            
+                            Library:UpdateDependencyBoxes();
+                            Library:SafeCallback(Dropdown.Callback, Dropdown.Value);
+                            Library:SafeCallback(Dropdown.Changed, Dropdown.Value);
+
+                            Library:AttemptSave();
+                        end;
+                    end);
+                end
+
+                Table:UpdateButton();
+                Dropdown:Display();
+
+                Buttons[Button] = Table;
+            end;
+
+            Scrolling.CanvasSize = UDim2.fromOffset(0, (Count * (20 * DPIScale)) + 1);
+
+            -- Workaround for silly roblox bug - not sure why it happens but sometimes the dropdown list will be empty
+            -- ... and for some reason refreshing the Visible property fixes the issue??????? thanks roblox!
+            Scrolling.Visible = false;
+            Scrolling.Visible = true;
+
+            local Y = math.clamp(Count * (20 * DPIScale), 0, MAX_DROPDOWN_ITEMS * (20 * DPIScale)) + 1;
+            RecalculateListSize(Y);
+        end;
+
+        function Dropdown:SetValues(NewValues)
+            if NewValues then
+                Dropdown.Values = NewValues;
+            end;
+
+            Dropdown:BuildDropdownList();
+        end;
+
+        function Dropdown:AddValues(NewValues)
+            if typeof(NewValues) == "table" then
+                for _, val in pairs(NewValues) do
+                    table.insert(Dropdown.Values, val);
+                end
+            elseif typeof(NewValues) == "string" then
+                table.insert(Dropdown.Values, NewValues);
+            else
+                return;
+            end
+
+            Dropdown:BuildDropdownList();
+        end;
+
+        function Dropdown:SetDisabledValues(NewValues)
+            if NewValues then
+                Dropdown.DisabledValues = NewValues;
+            end;
+
+            Dropdown:BuildDropdownList();
+        end
+
+        function Dropdown:AddDisabledValues(DisabledValues)
+            if typeof(DisabledValues) == "table" then
+                for _, val in pairs(DisabledValues) do
+                    table.insert(Dropdown.DisabledValues, val)
+                end
+            elseif typeof(DisabledValues) == "string" then
+                table.insert(Dropdown.DisabledValues, DisabledValues)
+            else
+                return
+            end
+
+            Dropdown:BuildDropdownList()
+        end
+
+        function Dropdown:SetVisible(Visibility)
+            Dropdown.Visible = Visibility;
+
+            DropdownOuter.Visible = Dropdown.Visible;
+            if not Dropdown.Visible then Dropdown:CloseDropdown(); end;
+        end;
+
+        function Dropdown:SetDisabled(Disabled)
+            Dropdown.Disabled = Disabled;
+
+            if Tooltip then
+                Tooltip.Disabled = Disabled;
+            end
+
+            if Disabled then
+                Dropdown:CloseDropdown();
+            end
+
+            Dropdown:Display();
+            Dropdown:UpdateColors();
+        end;
+
+        function Dropdown:OpenDropdown()
+            if Dropdown.Disabled then
+                return;
+            end;
+
+            if Library.IsMobile then
+                Library.CanDrag = false;
+            end;
+
+            if Info.Searchable then
+                ItemList.Visible = false;
+                DropdownInnerSearch.Text = "";
+                DropdownInnerSearch.Visible = true;
+            end
+
+            ListOuter.Visible = true;
+            Library.OpenedFrames[ListOuter] = true;
+            DropdownArrow.Rotation = 180;
+
+            RecalculateListSize();
+        end;
+
+        function Dropdown:CloseDropdown()
+            if Library.IsMobile then         
+                Library.CanDrag = true;
+            end;
+
+            if Info.Searchable then
+                DropdownInnerSearch.Text = "";
+                DropdownInnerSearch.Visible = false;
+                ItemList.Visible = true;
+            end
+
+            ListOuter.Visible = false;
+            Library.OpenedFrames[ListOuter] = nil;
+            DropdownArrow.Rotation = 0;
+        end;
+
+        function Dropdown:OnChanged(Func)
+            Dropdown.Changed = Func;
+
+            if Dropdown.Disabled then
+                return;
+            end;
+
+            Library:SafeCallback(Func, Dropdown.Value);
+        end;
+
+        function Dropdown:SetValue(Val)
+            if Dropdown.Multi then
+                local nTable = {};
+
+                for Value, Bool in next, Val do
+                    if table.find(Dropdown.Values, Value) then
+                        nTable[Value] = true
+                    end;
+                end;
+
+                Dropdown.Value = nTable;
+            else
+                if (not Val) then
+                    Dropdown.Value = nil;
+                elseif table.find(Dropdown.Values, Val) then
+                    Dropdown.Value = Val;
+                end;
+            end;
+
+            Dropdown:BuildDropdownList();
+
+            if not Dropdown.Disabled then
+                Library:SafeCallback(Dropdown.Callback, Dropdown.Value);
+                Library:SafeCallback(Dropdown.Changed, Dropdown.Value);
+            end;
+        end;
+
+        function Dropdown:SetText(...)
+            -- This is an Compat dropdown for Toggles, it doesn't have an TextLabel --
+            return;
+        end;
+
+        DropdownOuter.InputBegan:Connect(function(Input)
+            if Dropdown.Disabled then
+                return;
+            end;
+
+            if (Input.UserInputType == Enum.UserInputType.MouseButton1 and not Library:MouseIsOverOpenedFrame()) or Input.UserInputType == Enum.UserInputType.Touch then
+                if ListOuter.Visible then
+                    Dropdown:CloseDropdown();
+                else
+                    Dropdown:OpenDropdown();
+                end;
+            end;
+        end);
+
+        if Info.Searchable then
+            DropdownInnerSearch:GetPropertyChangedSignal("Text"):Connect(function()
+                Dropdown:BuildDropdownList()
+            end);
+        end;
+
+        InputService.InputBegan:Connect(function(Input)
+            if Dropdown.Disabled then
+                return;
+            end;
+
+            if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
+                local AbsPos, AbsSize = ListOuter.AbsolutePosition, ListOuter.AbsoluteSize;
+
+                if Mouse.X < AbsPos.X or Mouse.X > AbsPos.X + AbsSize.X
+                    or Mouse.Y < (AbsPos.Y - (20 * DPIScale) - 1) or Mouse.Y > AbsPos.Y + AbsSize.Y then
+
+                    Dropdown:CloseDropdown();
+                end;
+            end;
+        end);
+
+        Dropdown:BuildDropdownList();
+        Dropdown:Display();
+
+        local Defaults = {}
+
+        if typeof(Info.Default) == "string" then
+            local Idx = table.find(Dropdown.Values, Info.Default)
+            if Idx then
+                table.insert(Defaults, Idx)
+            end
+        elseif typeof(Info.Default) == 'table' then
+            for _, Value in next, Info.Default do
+                local Idx = table.find(Dropdown.Values, Value)
+                if Idx then
+                    table.insert(Defaults, Idx)
+                end
+            end
+        elseif typeof(Info.Default) == 'number' and Dropdown.Values[Info.Default] ~= nil then
+            table.insert(Defaults, Info.Default)
+        end
+
+        if next(Defaults) then
+            for i = 1, #Defaults do
+                local Index = Defaults[i]
+                if Info.Multi then
+                    Dropdown.Value[Dropdown.Values[Index]] = true
+                else
+                    Dropdown.Value = Dropdown.Values[Index];
+                end
+
+                if (not Info.Multi) then break end
+            end
+
+            Dropdown:BuildDropdownList();
+            Dropdown:Display();
+        end
+
+        task.delay(0.1, Dropdown.UpdateColors, Dropdown)
+
+        Dropdown.DisplayFrame = DropdownOuter;
+        if ParentObj.Addons then
+            table.insert(ParentObj.Addons, Dropdown)
+        end
+
+        Options[Idx] = Dropdown;
+
+        return self;
+    end;
+
+    BaseAddons.__index = BaseAddonsFuncs;
     BaseAddons.__namecall = function(Table, Key, ...)
-        return Funcs[Key](...);
+        return BaseAddonsFuncs[Key](...);
     end;
 end;
 
 local BaseGroupbox = {};
 
 do
-    local Funcs = {};
+    local BaseGroupboxFuncs = {};
 
-    function Funcs:AddBlank(Size, Visible)
+    function BaseGroupboxFuncs:AddBlank(Size, Visible)
         local Groupbox = self;
         local Container = Groupbox.Container;
 
         return Library:Create('Frame', {
             BackgroundTransparency = 1;
             Size = UDim2.new(1, 0, 0, Size);
-            Visible = typeof(Visible) ~= "boolean" and true or Visible;
+            Visible = if typeof(Visible) == "boolean" then Visible else true;
             ZIndex = 1;
             Parent = Container;
         });
     end;
 
-    function Funcs:AddLabel(...)
+    function BaseGroupboxFuncs:AddLabel(...)
         local Data = {}
 
-    	if select(2, ...) ~= nil and typeof(select(2, ...)) == "table" then
+        if select(2, ...) ~= nil and typeof(select(2, ...)) == "table" then
             if select(1, ...) ~= nil then
                 assert(typeof(select(1, ...)) == "string", "Expected string for Idx, got " .. typeof(select(1, ...)))
             end
             
-    		local Params = select(2, ...)
+            local Params = select(2, ...)
 
-    		Data.Text = Params.Text or ""
-    		Data.DoesWrap = Params.DoesWrap or false
-    		Data.Idx = select(1, ...)
-    	else
-    		Data.Text = select(1, ...) or ""
-    		Data.DoesWrap = select(2, ...) or false
+            Data.Text = Params.Text or ""
+            Data.DoesWrap = Params.DoesWrap or false
+            Data.Idx = select(1, ...)
+        else
+            Data.Text = select(1, ...) or ""
+            Data.DoesWrap = select(2, ...) or false
             Data.Idx = select(3, ...) or nil
-    	end
+        end
 
         Data.OriginalText = Data.Text;
         
@@ -1891,11 +2550,11 @@ do
         });
 
         if Data.DoesWrap then
-            local Y = select(2, Library:GetTextBounds(Data.Text, Library.Font, 14, Vector2.new(TextLabel.AbsoluteSize.X, math.huge)))
+            local Y = select(2, Library:GetTextBounds(Data.Text, Library.Font, 14 * DPIScale, Vector2.new(TextLabel.AbsoluteSize.X, math.huge)))
             TextLabel.Size = UDim2.new(1, -4, 0, Y)
         else
             Library:Create('UIListLayout', {
-                Padding = UDim.new(0, 4);
+                Padding = UDim.new(0, 4 * DPIScale);
                 FillDirection = Enum.FillDirection.Horizontal;
                 HorizontalAlignment = Enum.HorizontalAlignment.Right;
                 SortOrder = Enum.SortOrder.LayoutOrder;
@@ -1910,7 +2569,7 @@ do
             TextLabel.Text = Text
 
             if Data.DoesWrap then
-                local Y = select(2, Library:GetTextBounds(Text, Library.Font, 14, Vector2.new(TextLabel.AbsoluteSize.X, math.huge)))
+                local Y = select(2, Library:GetTextBounds(Text, Library.Font, 14 * DPIScale, Vector2.new(TextLabel.AbsoluteSize.X, math.huge)))
                 TextLabel.Size = UDim2.new(1, -4, 0, Y)
             end
 
@@ -1934,7 +2593,7 @@ do
         return Label;
     end;
     
-    function Funcs:AddButton(...)
+    function BaseGroupboxFuncs:AddButton(...)
         local Button = typeof(select(1, ...)) == "table" and select(1, ...) or {
             Text = select(1, ...),
             Func = select(2, ...)
@@ -1946,7 +2605,7 @@ do
         local Blank = nil;
         local Groupbox = self;
         local Container = Groupbox.Container;
-        local IsVisible = typeof(Button.Visible) ~= "boolean" and true or Button.Visible;
+        local IsVisible = if typeof(Button.Visible) == "boolean" then Button.Visible else true;
 
         local function CreateBaseButton(Button)
             local Outer = Library:Create('Frame', {
@@ -2082,12 +2741,12 @@ do
 
             assert(typeof(SubButton.Func) == 'function', 'AddButton: `Func` callback is missing.');
 
-            self.Outer.Size = UDim2.new(0.5, -2, 0, 20)
+            self.Outer.Size = UDim2.new(0.5, -2, 0, 20 * DPIScale)
 
             SubButton.Outer, SubButton.Inner, SubButton.Label = CreateBaseButton(SubButton)
 
             SubButton.Outer.Position = UDim2.new(1, 3, 0, 0)
-            SubButton.Outer.Size = UDim2.new(1, -3, 1, 0)--UDim2.fromOffset(self.Outer.AbsoluteSize.X - 2, self.Outer.AbsoluteSize.Y)
+            SubButton.Outer.Size = UDim2.fromOffset(self.Outer.AbsoluteSize.X - 2, self.Outer.AbsoluteSize.Y)
             SubButton.Outer.Parent = self.Outer
 
             function SubButton:UpdateColors()
@@ -2192,7 +2851,7 @@ do
         return Button;
     end;
 
-    function Funcs:AddDivider()
+    function BaseGroupboxFuncs:AddDivider()
         local Groupbox = self;
         local Container = self.Container
 
@@ -2231,17 +2890,19 @@ do
         Groupbox:Resize();
     end
 
-    function Funcs:AddInput(Idx, Info)
+    function BaseGroupboxFuncs:AddInput(Idx, Info)
         assert(Info.Text, 'AddInput: Missing `Text` string.')
 
-        Info.ClearTextOnFocus = typeof(Info.ClearTextOnFocus) == "boolean" and Info.ClearTextOnFocus or true;
+        Info.ClearTextOnFocus = if typeof(Info.ClearTextOnFocus) == "boolean" then Info.ClearTextOnFocus else true;
 
         local Textbox = {
             Value = Info.Default or '';
             Numeric = Info.Numeric or false;
             Finished = Info.Finished or false;
-            Visible = typeof(Info.Visible) == "boolean" and Info.Visible or true;
-            Disabled = typeof(Info.Disabled) == "boolean" and Info.Disabled or false;
+            Visible = if typeof(Info.Visible) == "boolean" then Info.Visible else true;
+            Disabled = if typeof(Info.Disabled) == "boolean" then Info.Disabled else false;
+        AllowEmpty = if typeof(Info.AllowEmpty) == "boolean" then Info.AllowEmpty else true;
+            EmptyReset = if typeof(Info.EmptyReset) == "string" then Info.EmptyReset else "---";
             Type = 'Input';
 
             Callback = Info.Callback or function(Value) end;
@@ -2325,7 +2986,7 @@ do
             PlaceholderColor3 = Color3.fromRGB(190, 190, 190);
             PlaceholderText = Info.Placeholder or '';
 
-            Text = Info.Default or '';
+            Text = Info.Default or (if Textbox.AllowEmpty == false then Textbox.EmptyReset else "---");
             TextColor3 = Library.FontColor;
             TextSize = 14;
             TextStrokeTransparency = 0;
@@ -2369,6 +3030,10 @@ do
         end;
 
         function Textbox:SetValue(Text)
+        if not Textbox.AllowEmpty and Trim(Text) == "" then
+        Text = Textbox.EmptyReset;
+        end
+
             if Info.MaxLength and #Text > Info.MaxLength then
                 Text = Text:sub(1, Info.MaxLength);
             end;
@@ -2469,15 +3134,15 @@ do
         return Textbox;
     end;
 
-    function Funcs:AddToggle(Idx, Info)
+    function BaseGroupboxFuncs:AddToggle(Idx, Info)
         assert(Info.Text, 'AddInput: Missing `Text` string.')
 
         local Toggle = {
             Value = Info.Default or false;
             Type = 'Toggle';
-            Visible = typeof(Info.Visible) == "boolean" and Info.Visible or true;
-            Disabled = typeof(Info.Disabled) == "boolean" and Info.Disabled or false;
-            Risky = typeof(Info.Risky) ~= "boolean" and false or Info.Risky;
+            Visible = if typeof(Info.Visible) == "boolean" then Info.Visible else true;
+            Disabled = if typeof(Info.Disabled) == "boolean" then Info.Disabled else false;
+            Risky = if typeof(Info.Risky) == "boolean" then Info.Risky else false;
             OriginalText = Info.Text; Text = Info.Text;
 
             Callback = Info.Callback or function(Value) end;
@@ -2517,8 +3182,8 @@ do
         });
 
         local ToggleLabel = Library:CreateLabel({
-            Size = UDim2.new(0, 216, 1, 0);
-            Position = UDim2.new(1, 6, 0, -1);
+            Size = UDim2.new(0, 216, 2, 0);
+            Position = UDim2.new(1, 6, -0.5, 0);
             TextSize = 14;
             Text = Info.Text;
             TextXAlignment = Enum.TextXAlignment.Left;
@@ -2689,7 +3354,7 @@ do
         return Toggle;
     end;
 
-    function Funcs:AddSlider(Idx, Info)
+    function BaseGroupboxFuncs:AddSlider(Idx, Info)
         assert(Info.Default, 'AddSlider: Missing default value.');
         assert(Info.Text, 'AddSlider: Missing slider text.');
         assert(Info.Min, 'AddSlider: Missing minimum value.');
@@ -2703,8 +3368,8 @@ do
             Rounding = Info.Rounding;
             MaxSize = 232;
             Type = 'Slider';
-            Visible = typeof(Info.Visible) == "boolean" and Info.Visible or true;
-            Disabled = typeof(Info.Disabled) == "boolean" and Info.Disabled or false;
+            Visible = if typeof(Info.Visible) == "boolean" then Info.Visible else true;
+            Disabled = if typeof(Info.Disabled) == "boolean" then Info.Disabled else false;
             OriginalText = Info.Text; Text = Info.Text;
 
             Prefix = typeof(Info.Prefix) == "string" and Info.Prefix or "";
@@ -3025,21 +3690,24 @@ do
         return Slider;
     end;
 
-    function Funcs:AddDropdown(Idx, Info)
-        if Info.SpecialType == 'Player' then
-            Info.ExcludeLocalPlayer = typeof(Info.ExcludeLocalPlayer) == "boolean" and Info.ExcludeLocalPlayer or false;
+    function BaseGroupboxFuncs:AddDropdown(Idx, Info)
+        Info.ReturnInstanceInstead = if typeof(Info.ReturnInstanceInstead) == "boolean" then Info.ReturnInstanceInstead else false;
 
-            Info.Values = GetPlayersString(Info.ExcludeLocalPlayer);
+        if Info.SpecialType == 'Player' then
+            Info.ExcludeLocalPlayer = if typeof(Info.ExcludeLocalPlayer) == "boolean" then Info.ExcludeLocalPlayer else false;
+
+            Info.Values = GetPlayers(Info.ExcludeLocalPlayer, Info.ReturnInstanceInstead);
             Info.AllowNull = true;
         elseif Info.SpecialType == 'Team' then
-            Info.Values = GetTeamsString();
+            Info.Values = GetTeams(Info.ReturnInstanceInstead);
             Info.AllowNull = true;
         end;
 
         assert(Info.Values, 'AddDropdown: Missing dropdown value list.');
         assert(Info.AllowNull or Info.Default, 'AddDropdown: Missing default value. Pass `AllowNull` as true if this was intentional.')
 
-        Info.Searchable = typeof(Info.Searchable) == "boolean" and Info.Searchable or false;
+        Info.Searchable = if typeof(Info.Searchable) == "boolean" then Info.Searchable else false;
+        Info.FormatDisplayValue = if typeof(Info.FormatDisplayValue) == "function" then Info.FormatDisplayValue else nil;
 
         if (not Info.Text) then
             Info.Compact = true;
@@ -3052,12 +3720,13 @@ do
             Multi = Info.Multi;
             Type = 'Dropdown';
             SpecialType = Info.SpecialType; -- can be either 'Player' or 'Team'
-            Visible = typeof(Info.Visible) == "boolean" and Info.Visible or true;
-            Disabled = typeof(Info.Disabled) == "boolean" and Info.Disabled or false;
+            Visible = if typeof(Info.Visible) == "boolean" then Info.Visible else true;
+            Disabled = if typeof(Info.Disabled) == "boolean" then Info.Disabled else false;
             Callback = Info.Callback or function(Value) end;
 
             OriginalText = Info.Text; Text = Info.Text;
             ExcludeLocalPlayer = Info.ExcludeLocalPlayer;
+            ReturnInstanceInstead = Info.ReturnInstanceInstead;
         };
 
         local DropdownLabel;
@@ -3195,7 +3864,7 @@ do
             Tooltip.Disabled = Dropdown.Disabled;
         end
 
-        local MAX_DROPDOWN_ITEMS = 8;
+        local MAX_DROPDOWN_ITEMS = if typeof(Info.MaxVisibleDropdownItems) == "number" then math.clamp(Info.MaxVisibleDropdownItems, 4, 16) else 8;
 
         local ListOuter = Library:Create('Frame', {
             BackgroundColor3 = Color3.new(0, 0, 0);
@@ -3210,7 +3879,7 @@ do
         end;
 
         local function RecalculateListSize(YSize)
-            local Y = YSize or math.clamp(GetTableSize(Dropdown.Values) * 20, 0, MAX_DROPDOWN_ITEMS * 20) + 1;
+            local Y = YSize or math.clamp(GetTableSize(Dropdown.Values) * (20 * DPIScale), 0, MAX_DROPDOWN_ITEMS * (20 * DPIScale)) + 1;
             ListOuter.Size = UDim2.fromOffset(DropdownOuter.AbsoluteSize.X + 0.5, Y)
         end;
 
@@ -3275,17 +3944,24 @@ do
 
             if Info.Multi then
                 for Idx, Value in next, Values do
+                    local StringValue = if typeof(Value) == "Instance" then Value.Name else Value;
+
                     if Dropdown.Value[Value] then
-                        Str = Str .. Value .. ', ';
+                        Str = Str .. (Info.FormatDisplayValue and tostring(Info.FormatDisplayValue(StringValue)) or StringValue) .. ', ';
                     end;
                 end;
 
                 Str = Str:sub(1, #Str - 2);
+                ItemList.Text = (Str == '' and '--' or Str);
             else
-                Str = Dropdown.Value or '';
-            end;
+                if not Dropdown.Value then
+                    ItemList.Text = '--';
+                    return;
+                end;
 
-            ItemList.Text = (Str == '' and '--' or Str);
+                local StringValue = if typeof(Dropdown.Value) == "Instance" then Dropdown.Value.Name else Dropdown.Value;
+                ItemList.Text = Info.FormatDisplayValue and tostring(Info.FormatDisplayValue(StringValue)) or StringValue;
+            end;
         end;
 
         function Dropdown:GetActiveValues()
@@ -3315,11 +3991,12 @@ do
 
             local Count = 0;
             for Idx, Value in next, Values do
-                if Info.Searchable and not string.lower(Value):match(string.lower(DropdownInnerSearch.Text)) then
+                local StringValue = if typeof(Value) == "Instance" then Value.Name else Value;
+                if Info.Searchable and not string.lower(StringValue):match(string.lower(DropdownInnerSearch.Text)) then
                     continue;
                 end
 
-                local IsDisabled = table.find(DisabledValues, Value);
+                local IsDisabled = table.find(DisabledValues, StringValue);
                 local Table = {};
 
                 Count = Count + 1;
@@ -3345,8 +4022,9 @@ do
                     Size = UDim2.new(1, -6, 1, 0);
                     Position = UDim2.new(0, 6, 0, 0);
                     TextSize = 14;
-                    Text = Value;
+                    Text = Info.FormatDisplayValue and tostring(Info.FormatDisplayValue(StringValue)) or StringValue;
                     TextXAlignment = Enum.TextXAlignment.Left;
+                    RichText = true;
                     ZIndex = 25;
                     Parent = Button;
                 });
@@ -3421,14 +4099,14 @@ do
                 Buttons[Button] = Table;
             end;
 
-            Scrolling.CanvasSize = UDim2.fromOffset(0, (Count * 20) + 1);
+            Scrolling.CanvasSize = UDim2.fromOffset(0, (Count * (20 * DPIScale)) + 1);
 
             -- Workaround for silly roblox bug - not sure why it happens but sometimes the dropdown list will be empty
             -- ... and for some reason refreshing the Visible property fixes the issue??????? thanks roblox!
             Scrolling.Visible = false;
             Scrolling.Visible = true;
 
-            local Y = math.clamp(Count * 20, 0, MAX_DROPDOWN_ITEMS * 20) + 1;
+            local Y = math.clamp(Count * (20 * DPIScale), 0, MAX_DROPDOWN_ITEMS * (20 * DPIScale)) + 1;
             RecalculateListSize(Y);
         end;
 
@@ -3436,6 +4114,20 @@ do
             if NewValues then
                 Dropdown.Values = NewValues;
             end;
+
+            Dropdown:BuildDropdownList();
+        end;
+
+        function Dropdown:AddValues(NewValues)
+            if typeof(NewValues) == "table" then
+                for _, val in pairs(NewValues) do
+                    table.insert(Dropdown.Values, val);
+                end
+            elseif typeof(NewValues) == "string" then
+                table.insert(Dropdown.Values, NewValues);
+            else
+                return;
+            end
 
             Dropdown:BuildDropdownList();
         end;
@@ -3448,13 +4140,25 @@ do
             Dropdown:BuildDropdownList();
         end
 
+        function Dropdown:AddDisabledValues(DisabledValues)
+            if typeof(DisabledValues) == "table" then
+                for _, val in pairs(DisabledValues) do
+                    table.insert(Dropdown.DisabledValues, val)
+                end
+            elseif typeof(DisabledValues) == "string" then
+                table.insert(Dropdown.DisabledValues, DisabledValues)
+            else
+                return
+            end
+
+            Dropdown:BuildDropdownList()
+        end
+
         function Dropdown:SetVisible(Visibility)
             Dropdown.Visible = Visibility;
 
             DropdownOuter.Visible = Dropdown.Visible;
             if DropdownLabel then DropdownLabel.Visible = Dropdown.Visible end;
-            if Blank then Blank.Visible = Dropdown.Visible end;
-            if CompactBlank then CompactBlank.Visible = Dropdown.Visible end;
             if not Dropdown.Visible then Dropdown:CloseDropdown(); end;
 
             Groupbox:Resize();
@@ -3560,7 +4264,7 @@ do
             end
         end;
 
-        local function ToggleUsingInput(Input)
+        DropdownOuter.InputBegan:Connect(function(Input)
             if Dropdown.Disabled then
                 return;
             end;
@@ -3572,18 +4276,13 @@ do
                     Dropdown:OpenDropdown();
                 end;
             end;
-        end
+        end);
 
         if Info.Searchable then
-            DropdownInner.InputBegan:Connect(ToggleUsingInput);
-            DropdownArrow.InputBegan:Connect(ToggleUsingInput);
-
             DropdownInnerSearch:GetPropertyChangedSignal("Text"):Connect(function()
                 Dropdown:BuildDropdownList()
-            end)
-        else
-            DropdownOuter.InputBegan:Connect(ToggleUsingInput);
-        end
+            end);
+        end;
 
         InputService.InputBegan:Connect(function(Input)
             if Dropdown.Disabled then
@@ -3594,7 +4293,7 @@ do
                 local AbsPos, AbsSize = ListOuter.AbsolutePosition, ListOuter.AbsoluteSize;
 
                 if Mouse.X < AbsPos.X or Mouse.X > AbsPos.X + AbsSize.X
-                    or Mouse.Y < (AbsPos.Y - 20 - 1) or Mouse.Y > AbsPos.Y + AbsSize.Y then
+                    or Mouse.Y < (AbsPos.Y - (20 * DPIScale) - 1) or Mouse.Y > AbsPos.Y + AbsSize.Y then
 
                     Dropdown:CloseDropdown();
                 end;
@@ -3647,7 +4346,7 @@ do
         return Dropdown;
     end;
 
-    function Funcs:AddDependencyBox()
+    function BaseGroupboxFuncs:AddDependencyBox()
         local Depbox = {
             Dependencies = {};
         };
@@ -3724,9 +4423,9 @@ do
         return Depbox;
     end;
 
-    BaseGroupbox.__index = Funcs;
+    BaseGroupbox.__index = BaseGroupboxFuncs;
     BaseGroupbox.__namecall = function(Table, Key, ...)
-        return Funcs[Key](...);
+        return BaseGroupboxFuncs[Key](...);
     end;
 end;
 
@@ -3911,20 +4610,28 @@ function Library:SetWatermark(Text)
     Library.WatermarkText.Text = Text;
 end;
 
-function Library:Notify(Text, Time, SoundId)
-    local Side = string.lower(Library.NotifySide);
+function Library:SetNotifySide(Side: string)
+    Library.NotifySide = Side;
+end;
 
-    if Side == "right" then
-        Library:RightNotify(Text, Time, SoundId);
+function Library:Notify(...)
+    local Data = { Steps = 1 }
+    local Info = select(1, ...)
+
+    if typeof(Info) == "table" then
+        Data.Title = Info.Title and tostring(Info.Title) or ""
+        Data.Description = tostring(Info.Description)
+        Data.Time = Info.Time or 5
+        Data.SoundId = Info.SoundId
     else
-        Library:LeftNotify(Text, Time, SoundId);
+        Data.Title = ""
+        Data.Description = tostring(Info)
+        Data.Time = select(2, ...) or 5
+        Data.SoundId = select(3, ...)
     end
-end;
-
-function Library:LeftNotify(Text, Time, SoundId)
-    Text = tostring(Text);
-    local XSize, YSize = Library:GetTextBounds(Text, Library.Font, 14);
-
+    
+    local Side = string.lower(Library.NotifySide);
+    local XSize, YSize = Library:GetTextBounds(Data.Description, Library.Font, 14);
     YSize = YSize + 7
 
     local NotifyOuter = Library:Create('Frame', {
@@ -3932,7 +4639,7 @@ function Library:LeftNotify(Text, Time, SoundId)
         Size = UDim2.new(0, 0, 0, YSize);
         ClipsDescendants = true;
         ZIndex = 100;
-        Parent = Library.LeftNotificationArea;
+        Parent = if Side == "left" then Library.LeftNotificationArea else Library.RightNotificationArea;
     });
 
     local NotifyInner = Library:Create('Frame', {
@@ -3977,158 +4684,87 @@ function Library:LeftNotify(Text, Time, SoundId)
     });
 
     local NotifyLabel = Library:CreateLabel({
-        Position = UDim2.new(0, 4, 0, 0);
+        AnchorPoint = if Side == "left" then Vector2.new(0, 0) else Vector2.new(1, 0);
+        Position = if Side == "left" then UDim2.new(0, 4, 0, 0) else UDim2.new(1, -4, 0, 0);
         Size = UDim2.new(1, -4, 1, 0);
-        Text = Text;
-        TextXAlignment = Enum.TextXAlignment.Left;
+        Text = (if Data.Title == "" then "" else "[" .. Data.Title .. "] ") .. tostring(Data.Description);
+        TextXAlignment = if Side == "left" then Enum.TextXAlignment.Left else Enum.TextXAlignment.Right;
         TextSize = 14;
         ZIndex = 103;
+        RichText = true;
         Parent = InnerFrame;
     });
 
     local SideColor = Library:Create('Frame', {
+        AnchorPoint = if Side == "left" then Vector2.new(0, 0) else Vector2.new(1, 0);
+        Position = if Side == "left" then UDim2.new(0, -1, 0, -1) else UDim2.new(1, -1, 0, -1);
         BackgroundColor3 = Library.AccentColor;
         BorderSizePixel = 0;
-        Position = UDim2.new(0, -1, 0, -1);
         Size = UDim2.new(0, 3, 1, 2);
         ZIndex = 104;
         Parent = NotifyOuter;
     });
 
+    function Data:Resize()
+        XSize, YSize = Library:GetTextBounds(NotifyLabel.Text, Library.Font, 14);
+        YSize = YSize + 7
+    
+        pcall(NotifyOuter.TweenSize, NotifyOuter, UDim2.new(0, XSize * DPIScale + 8 + 4, 0, YSize), 'Out', 'Quad', 0.4, true);
+    end
+
+    function Data:ChangeTitle(NewText)
+        NewText = if NewText == nil then "" else tostring(NewText);
+
+        Data.Title = NewText;
+        NotifyLabel.Text = (if Data.Title == "" then "" else "[" .. Data.Title .. "] ") .. tostring(Data.Description);
+
+        Data:Resize();
+    end
+
+    function Data:ChangeDescription(NewText)
+        if NewText == nil then return end
+        NewText = tostring(NewText);
+
+        Data.Description = NewText;
+        NotifyLabel.Text = (if Data.Title == "" then "" else "[" .. Data.Title .. "] ") .. tostring(Data.Description);
+
+        Data:Resize();
+    end
+
+    function Data:ChangeStep()
+        -- this is supposed to be empty
+    end
+
+    Data:Resize();
+
     Library:AddToRegistry(SideColor, {
         BackgroundColor3 = 'AccentColor';
     }, true);
 
-    if SoundId then
+    if Data.SoundId then
         Library:Create('Sound', {
-            SoundId = "rbxassetid://" .. tostring(SoundId):gsub("rbxassetid://", "");
+            SoundId = "rbxassetid://" .. tostring(Data.SoundId):gsub("rbxassetid://", "");
             Volume = 3;
             PlayOnRemove = true;
             Parent = game:GetService("SoundService");
         }):Destroy();
     end
 
-    pcall(NotifyOuter.TweenSize, NotifyOuter, UDim2.new(0, XSize + 8 + 4, 0, YSize), 'Out', 'Quad', 0.4, true);
+    pcall(NotifyOuter.TweenSize, NotifyOuter, UDim2.new(0, XSize * DPIScale + 8 + 4, 0, YSize), 'Out', 'Quad', 0.4, true);
 
     task.spawn(function()
-        if typeof(Time) == "Instance" then
-            Time.Destroying:Wait();
+        if typeof(Data.Time) == "Instance" then
+            Data.Time.Destroying:Wait();
         else
-            task.wait(Time or 5);
+            task.wait(Data.Time or 5);
         end
 
         pcall(NotifyOuter.TweenSize, NotifyOuter, UDim2.new(0, 0, 0, YSize), 'Out', 'Quad', 0.4, true);
-
         task.wait(0.4);
-
         NotifyOuter:Destroy();
     end);
-end;
 
-function Library:RightNotify(Text, Time, SoundId)
-    Text = tostring(Text);
-    local XSize, YSize = Library:GetTextBounds(Text, Library.Font, 14);
-
-    YSize = YSize + 7
-
-    local NotifyOuter = Library:Create('Frame', {
-        BorderColor3 = Color3.new(0, 0, 0);
-        Size = UDim2.new(0, 0, 0, YSize);
-        ClipsDescendants = true;
-        ZIndex = 100;
-        Parent = Library.RightNotificationArea;
-    });
-
-    local NotifyInner = Library:Create('Frame', {
-        BackgroundColor3 = Library.MainColor;
-        BorderColor3 = Library.OutlineColor;
-        BorderMode = Enum.BorderMode.Inset;
-        Size = UDim2.new(1, 0, 1, 0);
-        ZIndex = 101;
-        Parent = NotifyOuter;
-    });
-
-    Library:AddToRegistry(NotifyInner, {
-        BackgroundColor3 = 'MainColor';
-        BorderColor3 = 'OutlineColor';
-    }, true);
-
-    local InnerFrame = Library:Create('Frame', {
-        BackgroundColor3 = Color3.new(1, 1, 1);
-        BorderSizePixel = 0;
-        Position = UDim2.new(0, 1, 0, 1);
-        Size = UDim2.new(1, -2, 1, -2);
-        ZIndex = 102;
-        Parent = NotifyInner;
-    });
-
-    local Gradient = Library:Create('UIGradient', {
-        Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Library:GetDarkerColor(Library.MainColor)),
-            ColorSequenceKeypoint.new(1, Library.MainColor),
-        });
-        Rotation = -90;
-        Parent = InnerFrame;
-    });
-
-    Library:AddToRegistry(Gradient, {
-        Color = function()
-            return ColorSequence.new({
-                ColorSequenceKeypoint.new(0, Library:GetDarkerColor(Library.MainColor)),
-                ColorSequenceKeypoint.new(1, Library.MainColor),
-            });
-        end
-    });
-
-    local NotifyLabel = Library:CreateLabel({
-        AnchorPoint = Vector2.new(1, 0);
-        Position = UDim2.new(1, -4, 0, 0);
-        Size = UDim2.new(1, -4, 1, 0);
-        Text = Text;
-        TextXAlignment = Enum.TextXAlignment.Right;
-        TextSize = 14;
-        ZIndex = 103;
-        Parent = InnerFrame;
-    });
-
-    local SideColor = Library:Create('Frame', {
-        AnchorPoint = Vector2.new(1, 0);
-        BackgroundColor3 = Library.AccentColor;
-        BorderSizePixel = 0;
-        Position = UDim2.new(1, -1, 0, -1);
-        Size = UDim2.new(0, 3, 1, 2);
-        ZIndex = 104;
-        Parent = NotifyOuter;
-    });
-
-    Library:AddToRegistry(SideColor, {
-        BackgroundColor3 = 'AccentColor';
-    }, true);
-
-    if SoundId then
-        Library:Create('Sound', {
-            SoundId = "rbxassetid://" .. tostring(SoundId):gsub("rbxassetid://", "");
-            Volume = 3;
-            PlayOnRemove = true;
-            Parent = game:GetService("SoundService");
-        }):Destroy();
-    end
-
-    pcall(NotifyOuter.TweenSize, NotifyOuter, UDim2.new(0, XSize + 8 + 4, 0, YSize), 'Out', 'Quad', 0.4, true);
-
-    task.spawn(function()
-        if typeof(Time) == "Instance" then
-            Time.Destroying:Wait();
-        else
-            task.wait(Time or 5);
-        end
-
-        pcall(NotifyOuter.TweenSize, NotifyOuter, UDim2.new(0, 0, 0, YSize), 'Out', 'Quad', 0.4, true);
-
-        task.wait(0.4);
-
-        NotifyOuter:Destroy();
-    end);
+    return Data
 end;
 
 function Library:CreateWindow(...)
@@ -4373,6 +5009,8 @@ function Library:CreateWindow(...)
             Parent = TabContainer;
         });
 
+        local TopBarLabelStroke
+        local TopBarHighlight
         local TopBar, TopBarInner, TopBarLabel, TopBarTextLabel; do
             TopBar = Library:Create('Frame', {
                 BackgroundColor3 = Library.BackgroundColor;
@@ -4395,7 +5033,7 @@ function Library:CreateWindow(...)
                 Parent = TopBar;
             });
 
-            local TopBarHighlight = Library:Create('Frame', {
+            TopBarHighlight = Library:Create('Frame', {
                 BackgroundColor3 = Color3.fromRGB(255, 75, 75);
                 BorderSizePixel = 0;
                 Size = UDim2.new(1, 0, 0, 2);
@@ -4418,7 +5056,7 @@ function Library:CreateWindow(...)
                 Parent = TopBarInner;
             });
 
-            local TopBarLabelStroke = Library:ApplyTextStroke(TopBarLabel);
+            TopBarLabelStroke = Library:ApplyTextStroke(TopBarLabel);
             TopBarLabelStroke.Color = Color3.fromRGB(174, 3, 3);
 
             TopBarTextLabel = Library:CreateLabel({
@@ -4571,6 +5209,26 @@ function Library:CreateWindow(...)
 
                 Tab:Resize();
             end;
+
+            TopBar.BorderColor3 = Info.IsNormal == true and Color3.fromRGB(27, 42, 53) or Color3.fromRGB(248, 51, 51)
+            TopBarInner.BorderColor3 = Info.IsNormal == true and Library.OutlineColor or Color3.fromRGB(0, 0, 0)
+            TopBarInner.BackgroundColor3 = Info.IsNormal == true and Library.BackgroundColor or Color3.fromRGB(117, 22, 17)
+            TopBarHighlight.BackgroundColor3 = Info.IsNormal == true and Library.AccentColor or Color3.fromRGB(255, 75, 75)
+             
+            TopBarLabel.TextColor3 = Info.IsNormal == true and Library.FontColor or Color3.fromRGB(255, 55, 55)
+            TopBarLabelStroke.Color = Info.IsNormal == true and Library.Black or Color3.fromRGB(174, 3, 3)
+
+            if not Library.RegistryMap[TopBarInner] then Library:AddToRegistry(TopBarInner, {}) end
+            if not Library.RegistryMap[TopBarHighlight] then Library:AddToRegistry(TopBarHighlight, {}) end
+            if not Library.RegistryMap[TopBarLabel] then Library:AddToRegistry(TopBarLabel, {}) end
+            if not Library.RegistryMap[TopBarLabelStroke] then Library:AddToRegistry(TopBarLabelStroke, {}) end
+
+            Library.RegistryMap[TopBarInner].Properties.BorderColor3 = Info.IsNormal == true and "OutlineColor" or nil;
+            Library.RegistryMap[TopBarInner].Properties.BackgroundColor3 = Info.IsNormal == true and "BackgroundColor" or nil;
+            Library.RegistryMap[TopBarHighlight].Properties.BackgroundColor3 = Info.IsNormal == true and "AccentColor" or nil;
+
+            Library.RegistryMap[TopBarLabel].Properties.TextColor3 = Info.IsNormal == true and "FontColor" or nil;
+            Library.RegistryMap[TopBarLabelStroke].Properties.Color = Info.IsNormal == true and "Black" or nil;
         end;
 
         function Tab:ShowTab()
@@ -4690,7 +5348,7 @@ function Library:CreateWindow(...)
                     end;
                 end;
 
-                BoxOuter.Size = UDim2.new(1, 0, 0, 20 + Size + 2 + 2);
+                BoxOuter.Size = UDim2.new(1, 0, 0, (20 * DPIScale + Size) + 2 + 2);
             end;
 
             Groupbox.Container = Container;
@@ -4873,7 +5531,7 @@ function Library:CreateWindow(...)
                         end;
                     end;
 
-                    BoxOuter.Size = UDim2.new(1, 0, 0, 20 + Size + 2 + 2);
+                    BoxOuter.Size = UDim2.new(1, 0, 0, (20 * DPIScale + Size) + 2 + 2);
                 end;
 
                 Button.InputBegan:Connect(function(Input)
@@ -4955,47 +5613,49 @@ function Library:CreateWindow(...)
         Library.Toggled = Toggled;
         ModalElement.Modal = Toggled;
 
-        -- if Toggled then
-        --     -- A bit scuffed, but if we're going from not toggled -> toggled we want to show the frame immediately so that the fade is visible.
-        --     Outer.Visible = true;
+        if Toggled then
+            -- A bit scuffed, but if we're going from not toggled -> toggled we want to show the frame immediately so that the fade is visible.
+            Outer.Visible = true;
 
-        --     -- if DrawingLib.drawing_replaced ~= true then
-        --     --     local Cursor = DrawingLib.new("Triangle")
-        --     --     Cursor.Thickness = 1
-        --     --     Cursor.Filled = true
-        --     --     Cursor.Visible = Library.ShowCustomCursor
+            if DrawingLib.drawing_replaced ~= true and IsBadDrawingLib ~= true then
+                IsBadDrawingLib = not (pcall(function()
+                    local Cursor = DrawingLib.new("Triangle")
+                    Cursor.Thickness = 1
+                    Cursor.Filled = true
+                    Cursor.Visible = Library.ShowCustomCursor
 
-        --     --     local CursorOutline = DrawingLib.new("Triangle")
-        --     --     CursorOutline.Thickness = 1
-        --     --     CursorOutline.Filled = false
-        --     --     CursorOutline.Color = Color3.new(0, 0, 0)
-        --     --     CursorOutline.Visible = Library.ShowCustomCursor
-                
-        --     --     local OldMouseIconState = InputService.MouseIconEnabled
-        --     --     pcall(function() RunService:UnbindFromRenderStep("LinoriaCursor") end)
-        --     --     RunService:BindToRenderStep("LinoriaCursor", Enum.RenderPriority.Camera.Value - 1, function()
-        --     --         InputService.MouseIconEnabled = not Library.ShowCustomCursor
-        --     --         local mPos = InputService:GetMouseLocation()
-        --     --         local X, Y = mPos.X, mPos.Y
-        --     --         Cursor.Color = Library.AccentColor
-        --     --         Cursor.PointA = Vector2.new(X, Y)
-        --     --         Cursor.PointB = Vector2.new(X + 16, Y + 6)
-        --     --         Cursor.PointC = Vector2.new(X + 6, Y + 16)
-        --     --         Cursor.Visible = Library.ShowCustomCursor
-        --     --         CursorOutline.PointA = Cursor.PointA
-        --     --         CursorOutline.PointB = Cursor.PointB
-        --     --         CursorOutline.PointC = Cursor.PointC
-        --     --         CursorOutline.Visible = Library.ShowCustomCursor
+                    local CursorOutline = DrawingLib.new("Triangle")
+                    CursorOutline.Thickness = 1
+                    CursorOutline.Filled = false
+                    CursorOutline.Color = Color3.new(0, 0, 0)
+                    CursorOutline.Visible = Library.ShowCustomCursor
+                    
+                    local OldMouseIconState = InputService.MouseIconEnabled
+                    pcall(function() RunService:UnbindFromRenderStep("LinoriaCursor") end)
+                    RunService:BindToRenderStep("LinoriaCursor", Enum.RenderPriority.Camera.Value - 1, function()
+                        InputService.MouseIconEnabled = not Library.ShowCustomCursor
+                        local mPos = InputService:GetMouseLocation()
+                        local X, Y = mPos.X, mPos.Y
+                        Cursor.Color = Library.AccentColor
+                        Cursor.PointA = Vector2.new(X, Y)
+                        Cursor.PointB = Vector2.new(X + 16, Y + 6)
+                        Cursor.PointC = Vector2.new(X + 6, Y + 16)
+                        Cursor.Visible = Library.ShowCustomCursor
+                        CursorOutline.PointA = Cursor.PointA
+                        CursorOutline.PointB = Cursor.PointB
+                        CursorOutline.PointC = Cursor.PointC
+                        CursorOutline.Visible = Library.ShowCustomCursor
 
-        --     --         if not Toggled or (not ScreenGui or not ScreenGui.Parent) then
-        --     --             InputService.MouseIconEnabled = OldMouseIconState
-        --     --             if Cursor then Cursor:Destroy() end
-        --     --             if CursorOutline then CursorOutline:Destroy() end
-        --     --             RunService:UnbindFromRenderStep("LinoriaCursor")
-        --     --         end
-        --     --     end)
-        --     -- end
-        -- end;
+                        if not Toggled or (not ScreenGui or not ScreenGui.Parent) then
+                            InputService.MouseIconEnabled = OldMouseIconState
+                            if Cursor then Cursor:Destroy() end
+                            if CursorOutline then CursorOutline:Destroy() end
+                            RunService:UnbindFromRenderStep("LinoriaCursor")
+                        end
+                    end)
+                end));
+            end
+        end;
 
         for _, Option in Options do
             task.spawn(function()
@@ -5210,21 +5870,28 @@ function Library:CreateWindow(...)
 end;
 
 local function OnPlayerChange()
-    local PlayerList, ExcludedPlayerList = GetPlayersString(), GetPlayersString(true);
+    local PlayerList, ExcludedPlayerList = GetPlayers(false, false), GetPlayers(true, false);
+    local StringPlayerList, StringExcludedPlayerList = GetPlayers(false, true), GetPlayers(true, true);
 
     for _, Value in next, Options do
         if Value.SetValues and Value.Type == 'Dropdown' and Value.SpecialType == 'Player' then
-            Value:SetValues(Value.ExcludeLocalPlayer and ExcludedPlayerList or PlayerList);
+            Value:SetValues(
+                if Value.ReturnInstanceInstead then
+                    (if Value.ExcludeLocalPlayer then ExcludedPlayerList else PlayerList)
+                else
+                    (if Value.ExcludeLocalPlayer then StringExcludedPlayerList else StringPlayerList)
+            );
         end;
     end;
 end;
 
 local function OnTeamChange()
-    local TeamList = GetTeamsString();
+    local TeamList = GetTeams(false);
+    local StringTeamList = GetTeams(true);
 
     for _, Value in next, Options do
         if Value.SetValues and Value.Type == 'Dropdown' and Value.SpecialType == 'Team' then
-            Value:SetValues(TeamList);
+            Value:SetValues(if Value.ReturnInstanceInstead then TeamList else StringTeamList);
         end;
     end;
 end;
