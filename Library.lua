@@ -11,7 +11,7 @@ local LocalPlayer = Players.LocalPlayer;
 local Mouse = LocalPlayer:GetMouse();
 
 local DrawingLib = typeof(Drawing) == "table" and Drawing or { drawing_replaced = true };
-local ProtectGui = protectgui or (function() end);
+local ProtectGui = protectgui or protect_gui or (function() end);
 local GetHUI = gethui or (function() return CoreGui end);
 
 local IsBadDrawingLib = false;
