@@ -20,8 +20,7 @@ ESPLibrary is a Lua library designed for Roblox that provides ESP (Extra Sensory
 The library is available globally via `getgenv().ESP` after loading the script.
 
 ```lua
-local ESP = require(path.to.ESPLibrary)
--- or access via getgenv().ESP
+local ESP = loadstring(game:HttpGet("https://raw.githubusercontent.com/Luckyware-Softworks/Library/refs/heads/main/ESPLibrary.lua"))()
 ```
 
 ## Settings
