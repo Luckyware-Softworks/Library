@@ -69,6 +69,10 @@ local function CreateESP(object)
         local root = object:FindFirstChild("HumanoidRootPart")
         local humanoid = object:FindFirstChild("Humanoid")
 
+        if not humanoid then
+            humanoid = object:FindFirstChildOfClass("Humanoid")
+        end
+
         if not root or not humanoid then
             for _, drawing in pairs(elements) do drawing.Visible = false end
             return
