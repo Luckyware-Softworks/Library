@@ -35,6 +35,11 @@ end
 local function IsObjectValid(object)
     local root = object:FindFirstChild("HumanoidRootPart")
     local humanoid = object:FindFirstChild("Humanoid")
+
+     if not humanoid then
+        humanoid = object:FindFirstOfClass("Humanoid")
+    end
+    
     return root and humanoid and humanoid.Health > 0
 end
 
